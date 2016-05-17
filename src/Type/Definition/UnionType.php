@@ -6,7 +6,7 @@ use GraphQL\Utils;
 class UnionType extends Type implements AbstractType, OutputType, CompositeType
 {
     /**
-     * @var Array<GraphQLObjectType>
+     * @var ObjectType[]
      */
     private $_types;
 
@@ -18,7 +18,7 @@ class UnionType extends Type implements AbstractType, OutputType, CompositeType
     /**
      * @var callback
      */
-    private $_resolveType;
+    private $_resolveTypeFn;
 
     /**
      * @var array
@@ -44,14 +44,20 @@ class UnionType extends Type implements AbstractType, OutputType, CompositeType
         $this->name = $config['name'];
         $this->description = isset($config['description']) ? $config['description'] : null;
         $this->_types = $config['types'];
-        $this->_resolveType = isset($config['resolveType']) ? $config['resolveType'] : null;
+        $this->_resolveTypeFn = isset($config['resolveType']) ? $config['resolveType'] : null;
         $this->_config = $config;
     }
 
-    /**
-     * @return array<ObjectType>
-     */
     public function getPossibleTypes()
+    {
+        trigger_error(__METHOD__ . ' is deprecated in favor of ' . __CLASS__ . '::getTypes()', E_USER_DEPRECATED);
+        return $this->getTypes();
+    }
+
+    /**
+     * @return ObjectType[]
+     */
+    public function getTypes()
     {
         if ($this->_types instanceof \Closure) {
             $this->_types = call_user_func($this->_types);
@@ -71,7 +77,7 @@ class UnionType extends Type implements AbstractType, OutputType, CompositeType
 
         if (null === $this->_possibleTypeNames) {
             $this->_possibleTypeNames = [];
-            foreach ($this->getPossibleTypes() as $possibleType) {
+            foreach ($this->getTypes() as $possibleType) {
                 $this->_possibleTypeNames[$possibleType->name] = true;
             }
         }
@@ -79,15 +85,10 @@ class UnionType extends Type implements AbstractType, OutputType, CompositeType
     }
 
     /**
-     * @param ObjectType $value
-     * @param ResolveInfo $info
-     *
-     * @return Type
-     * @throws \Exception
+     * @return callable|null
      */
-    public function getObjectType($value, ResolveInfo $info)
+    public function getResolveTypeFn()
     {
-        $resolver = $this->_resolveType;
-        return $resolver ? call_user_func($resolver, $value, $info) : Type::getTypeOf($value, $info, $this);
+        return $this->_resolveTypeFn;
     }
 }

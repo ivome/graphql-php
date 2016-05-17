@@ -2,12 +2,10 @@
 namespace GraphQL\Language;
 
 use GraphQL\Language\AST\Node;
+use GraphQL\Utils\TypeInfo;
 
 class Visitor
 {
-    const BREAK_VISIT = '@@BREAK@@';
-    const CONTINUE_VISIT = '@@CONTINUE@@';
-
     /**
      * Break visitor
      *
@@ -65,6 +63,22 @@ class Visitor
         Node::NAMED_TYPE => ['name'],
         Node::LIST_TYPE => ['type'],
         Node::NON_NULL_TYPE => ['type'],
+
+        Node::SCHEMA_DEFINITION => ['operationTypes'],
+        Node::OPERATION_TYPE_DEFINITION => ['type'],
+        Node::SCALAR_TYPE_DEFINITION => ['name'],
+        Node::OBJECT_TYPE_DEFINITION => ['name', 'interfaces', 'fields'],
+        Node::FIELD_DEFINITION => ['name', 'arguments', 'type'],
+        Node::INPUT_VALUE_DEFINITION => ['name', 'type', 'defaultValue'],
+        Node::INPUT_VALUE_DEFINITION => [ 'name', 'type', 'defaultValue' ],
+        Node::INTERFACE_TYPE_DEFINITION => [ 'name', 'fields' ],
+        Node::UNION_TYPE_DEFINITION => [ 'name', 'types' ],
+        Node::ENUM_TYPE_DEFINITION => [ 'name', 'values' ],
+
+        Node::ENUM_VALUE_DEFINITION => [ 'name' ],
+        Node::INPUT_OBJECT_TYPE_DEFINITION => [ 'name', 'fields' ],
+        Node::TYPE_EXTENSION_DEFINITION => [ 'definition' ],
+        Node::DIRECTIVE_DEFINITION => [ 'name', 'arguments', 'locations' ]
     );
 
     /**
@@ -228,7 +242,7 @@ class Visitor
                     throw new \Exception('Invalid AST Node: ' . json_encode($node));
                 }
 
-                $visitFn = self::getVisitFn($visitor, $isLeaving, $node->kind);
+                $visitFn = self::getVisitFn($visitor, $node->kind, $isLeaving);
 
                 if ($visitFn) {
                     $result = call_user_func($visitFn, $node, $key, $parent, $path, $ancestors);
@@ -242,7 +256,9 @@ class Visitor
                                 array_pop($path);
                                 continue;
                             }
-                            $editValue = null;
+                            if ($result->removeNode) {
+                                $editValue = null;
+                            }
                         } else {
                             $editValue = $result;
                         }
@@ -293,12 +309,102 @@ class Visitor
     }
 
     /**
+     * @param $visitors
+     * @return array
+     */
+    static function visitInParallel($visitors)
+    {
+        $visitorsCount = count($visitors);
+        $skipping = new \SplFixedArray($visitorsCount);
+
+        return [
+            'enter' => function ($node) use ($visitors, $skipping, $visitorsCount) {
+                for ($i = 0; $i < $visitorsCount; $i++) {
+                    if (empty($skipping[$i])) {
+                        $fn = self::getVisitFn($visitors[$i], $node->kind, /* isLeaving */ false);
+
+                        if ($fn) {
+                            $result = call_user_func_array($fn, func_get_args());
+
+                            if ($result instanceof VisitorOperation) {
+                                if ($result->doContinue) {
+                                    $skipping[$i] = $node;
+                                } else if ($result->doBreak) {
+                                    $skipping[$i] = $result;
+                                } else if ($result->removeNode) {
+                                    return $result;
+                                }
+                            } else if ($result !== null) {
+                                return $result;
+                            }
+                        }
+                    }
+                }
+            },
+            'leave' => function ($node) use ($visitors, $skipping, $visitorsCount) {
+                for ($i = 0; $i < $visitorsCount; $i++) {
+                    if (empty($skipping[$i])) {
+                        $fn = self::getVisitFn($visitors[$i], $node->kind, /* isLeaving */ true);
+
+                        if ($fn) {
+                            $result = call_user_func_array($fn, func_get_args());
+                            if ($result instanceof VisitorOperation) {
+                                if ($result->doBreak) {
+                                    $skipping[$i] = $result;
+                                } else if ($result->removeNode) {
+                                    return $result;
+                                }
+                            } else if ($result !== null) {
+                                return $result;
+                            }
+                        }
+                    } else if ($skipping[$i] === $node) {
+                        $skipping[$i] = null;
+                    }
+                }
+            }
+        ];
+    }
+
+    /**
+     * Creates a new visitor instance which maintains a provided TypeInfo instance
+     * along with visiting visitor.
+     */
+    static function visitWithTypeInfo(TypeInfo $typeInfo, $visitor)
+    {
+        return [
+            'enter' => function ($node) use ($typeInfo, $visitor) {
+                $typeInfo->enter($node);
+                $fn = self::getVisitFn($visitor, $node->kind, false);
+
+                if ($fn) {
+                    $result = call_user_func_array($fn, func_get_args());
+                    if ($result) {
+                        $typeInfo->leave($node);
+                        if ($result instanceof Node) {
+                            $typeInfo->enter($result);
+                        }
+                    }
+                    return $result;
+                }
+                return null;
+            },
+            'leave' => function ($node) use ($typeInfo, $visitor) {
+                $fn = self::getVisitFn($visitor, $node->kind, true);
+                $result = $fn ? call_user_func_array($fn, func_get_args()) : null;
+                $typeInfo->leave($node);
+                return $result;
+            }
+        ];
+    }
+
+    /**
      * @param $visitor
-     * @param $isLeaving
      * @param $kind
+     * @param $isLeaving
      * @return null
      */
-    public static function getVisitFn($visitor, $isLeaving, $kind)
+    public static function getVisitFn($visitor, $kind, $isLeaving)
     {
         if (!$visitor) {
             return null;

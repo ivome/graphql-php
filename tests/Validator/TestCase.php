@@ -3,6 +3,7 @@ namespace GraphQL\Tests\Validator;
 
 use GraphQL\Language\Parser;
 use GraphQL\Schema;
+use GraphQL\Type\Definition\Directive;
 use GraphQL\Type\Definition\EnumType;
 use GraphQL\Type\Definition\InputObjectType;
 use GraphQL\Type\Definition\InterfaceType;
@@ -14,12 +15,10 @@ use GraphQL\Validator\DocumentValidator;
 
 abstract class TestCase extends \PHPUnit_Framework_TestCase
 {
-    public $humanType;
-
     /**
      * @return Schema
      */
-    protected function getDefaultSchema()
+    public static function getDefaultSchema()
     {
         $FurColor = null;
 
@@ -43,12 +42,24 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
             ],
         ]);
 
+        $Canine = new InterfaceType([
+            'name' => 'Canine',
+            'fields' => function() {
+                return [
+                    'name' => [
+                        'type' => Type::string(),
+                        'args' => ['surname' => ['type' => Type::boolean()]]
+                    ]
+                ];
+            }
+        ]);
+
         $DogCommand = new EnumType([
             'name' => 'DogCommand',
             'values' => [
                 'SIT' => ['value' => 0],
                 'HEEL' => ['value' => 1],
-                'DOWN' => ['value' => 3]
+                'DOWN' => ['value' => 2]
             ]
         ]);
 
@@ -76,7 +87,7 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
                     'args' => ['x' => ['type' => Type::int()], 'y' => ['type' => Type::int()]]
                 ]
             ],
-            'interfaces' => [$Being, $Pet]
+            'interfaces' => [$Being, $Pet, $Canine]
         ]);
 
         $Cat = new ObjectType([
@@ -111,7 +122,8 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $Human = $this->humanType = new ObjectType([
+        $Human = null;
+        $Human = new ObjectType([
             'name' => 'Human',
             'isTypeOf' => function() {return true;},
             'interfaces' => [$Being, $Intelligent],
@@ -121,7 +133,7 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
                     'args' => ['surname' => ['type' => Type::boolean()]]
                 ],
                 'pets' => ['type' => Type::listOf($Pet)],
-                'relatives' => ['type' => function() {return Type::listOf($this->humanType); }],
+                'relatives' => ['type' => function() use (&$Human) {return Type::listOf($Human); }],
                 'iq' => ['type' => Type::int()]
             ]
         ]);
@@ -277,7 +289,15 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $defaultSchema = new Schema($queryRoot);
+        $defaultSchema = new Schema([
+            'query' => $queryRoot,
+            'directives' => [
+                new Directive([
+                    'name' => 'operationOnly',
+                    'locations' => [ 'QUERY' ],
+                ])
+            ]
+        ]);
         return $defaultSchema;
     }
 
@@ -322,11 +342,11 @@ abstract class TestCase extends \PHPUnit_Framework_TestCase
 
     function expectPassesCompleteValidation($queryString)
     {
-        $this->expectValid($this->getDefaultSchema(), $this->getAllRules(), $queryString);
+        $this->expectValid($this->getDefaultSchema(), DocumentValidator::allRules(), $queryString);
     }
 
     function expectFailsCompleteValidation($queryString, $errors)
     {
-        $this->expectInvalid($this->getDefaultSchema(), $this->getAllRules(), $queryString, $errors);
+        $this->expectInvalid($this->getDefaultSchema(), DocumentValidator::allRules(), $queryString, $errors);
     }
 }

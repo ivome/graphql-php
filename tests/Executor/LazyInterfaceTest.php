@@ -52,7 +52,7 @@ class LazyInterfaceTest extends \PHPUnit_Framework_TestCase
             }
         ]);
 
-        $this->schema = new Schema($query);
+        $this->schema = new Schema(['query' => $query]);
     }
 
     /**

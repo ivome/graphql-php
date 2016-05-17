@@ -11,6 +11,7 @@ use GraphQL\Type\Definition\NonNull;
 use GraphQL\Type\Definition\ObjectType;
 use GraphQL\Type\Definition\Type;
 use GraphQL\Type\Definition\UnionType;
+use GraphQL\Utils;
 
 class DefinitionTest extends \PHPUnit_Framework_TestCase
 {
@@ -38,6 +39,11 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
      * @var ObjectType
      */
     public $blogQuery;
+
+    /**
+     * @var ObjectType
+     */
+    public $blogSubscription;
 
     /**
      * @var ObjectType
@@ -124,11 +130,28 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
                 'writeArticle' => ['type' => $this->blogArticle]
             ]
         ]);
+
+        $this->blogSubscription = new ObjectType([
+            'name' => 'Subscription',
+            'fields' => [
+                'articleSubscribe' => [
+                    'args' => [ 'id' => [ 'type' => Type::string() ]],
+                    'type' => $this->blogArticle
+                ]
+            ]
+        ]);
     }
 
+    // Type System: Example
+
+    /**
+     * @it defines a query only schema
+     */
     public function testDefinesAQueryOnlySchema()
     {
-        $blogSchema = new Schema($this->blogQuery);
+        $blogSchema = new Schema([
+            'query' => $this->blogQuery
+        ]);
 
         $this->assertSame($blogSchema->getQueryType(), $this->blogQuery);
 
@@ -165,9 +188,15 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
         $this->assertSame($this->blogArticle, $feedFieldType->getWrappedType());
     }
 
+    /**
+     * @it defines a mutation schema
+     */
     public function testDefinesAMutationSchema()
     {
-        $schema = new Schema($this->blogQuery, $this->blogMutation);
+        $schema = new Schema([
+            'query' => $this->blogQuery,
+            'mutation' => $this->blogMutation
+        ]);
 
         $this->assertSame($this->blogMutation, $schema->getMutationType());
         $writeMutation = $this->blogMutation->getField('writeArticle');
@@ -178,6 +207,27 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
         $this->assertSame('writeArticle', $writeMutation->name);
     }
 
+    /**
+     * @it defines a subscription schema
+     */
+    public function testDefinesSubscriptionSchema()
+    {
+        $schema = new Schema([
+            'query' => $this->blogQuery,
+            'subscription' => $this->blogSubscription
+        ]);
+
+        $this->assertEquals($this->blogSubscription, $schema->getSubscriptionType());
+
+        $sub = $this->blogSubscription->getField('articleSubscribe');
+        $this->assertEquals($sub->getType(), $this->blogArticle);
+        $this->assertEquals($sub->getType()->name, 'Article');
+        $this->assertEquals($sub->name, 'articleSubscribe');
+    }
+
+    /**
+     * @it includes nested input objects in the map
+     */
     public function testIncludesNestedInputObjectInTheMap()
     {
         $nestedInputObject = new InputObjectType([
@@ -198,10 +248,16 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $schema = new Schema($this->blogQuery, $someMutation);
+        $schema = new Schema([
+            'query' => $this->blogQuery,
+            'mutation' => $someMutation
+        ]);
         $this->assertSame($nestedInputObject, $schema->getType('NestedInputObject'));
     }
 
+    /**
+     * @it includes interfaces\' subtypes in the type map
+     */
     public function testIncludesInterfaceSubtypesInTheTypeMap()
     {
         $someInterface = new InterfaceType([
@@ -220,18 +276,23 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             'isTypeOf' => function() {return true;}
         ]);
 
-        $schema = new Schema(new ObjectType([
-            'name' => 'Query',
-            'fields' => [
-                'iface' => ['type' => $someInterface]
-            ]
-        ]));
+        $schema = new Schema([
+            'query' => new ObjectType([
+                'name' => 'Query',
+                'fields' => [
+                    'iface' => ['type' => $someInterface]
+                ]
+            ]),
+            'types' => [$someSubtype]
+        ]);
         $this->assertSame($someSubtype, $schema->getType('SomeSubtype'));
     }
 
+    /**
+     * @it includes interfaces\' thunk subtypes in the type map
+     */
     public function testIncludesInterfacesThunkSubtypesInTheTypeMap()
     {
-        // includes interfaces' thunk subtypes in the type map
         $someInterface = null;
 
         $someSubtype = new ObjectType([
@@ -250,16 +311,22 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $schema = new Schema(new ObjectType([
-            'name' => 'Query',
-            'fields' => [
-                'iface' => ['type' => $someInterface]
-            ]
-        ]));
+        $schema = new Schema([
+            'query' => new ObjectType([
+                'name' => 'Query',
+                'fields' => [
+                    'iface' => ['type' => $someInterface]
+                ]
+            ]),
+            'types' => [$someSubtype]
+        ]);
 
         $this->assertSame($someSubtype, $schema->getType('SomeSubtype'));
     }
 
+    /**
+     * @it stringifies simple types
+     */
     public function testStringifiesSimpleTypes()
     {
         $this->assertSame('Int', (string) Type::int());
@@ -278,6 +345,9 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
         $this->assertSame('[[Int]]', (string) new ListOfType(new ListOfType(Type::int())));
     }
 
+    /**
+     * @it identifies input types
+     */
     public function testIdentifiesInputTypes()
     {
         $expected = [
@@ -294,6 +364,9 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
         }
     }
 
+    /**
+     * @it identifies output types
+     */
     public function testIdentifiesOutputTypes()
     {
         $expected = [
@@ -310,12 +383,18 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
         }
     }
 
+    /**
+     * @it prohibits nesting NonNull inside NonNull
+     */
     public function testProhibitsNonNullNesting()
     {
         $this->setExpectedException('\Exception');
         new NonNull(new NonNull(Type::int()));
     }
 
+    /**
+     * @it prohibits putting non-Object types in unions
+     */
     public function testProhibitsPuttingNonObjectTypesInUnions()
     {
         $int = Type::int();
@@ -337,7 +416,7 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
                 $this->fail('Expected exception not thrown');
             } catch (\Exception $e) {
                 $this->assertSame(
-                    'Error in "BadUnion" type definition: expecting callable or instance of GraphQL\Type\Definition\ObjectType at "types:0", but got "' . get_class($type) . '"',
+                    'Error in "BadUnion" type definition: expecting callable or instance of GraphQL\Type\Definition\ObjectType at "types:0", but got "' . Utils::getVariableType($type) . '"',
                     $e->getMessage()
                 );
             }
@@ -387,12 +466,15 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             }
         ]);
 
-        $schema = new Schema(new ObjectType([
-            'name' => 'Query',
-            'fields' => [
-                'node' => ['type' => $node]
-            ]
-        ]));
+        $schema = new Schema([
+            'query' => new ObjectType([
+                'name' => 'Query',
+                'fields' => [
+                    'node' => ['type' => $node]
+                ]
+            ]),
+            'types' => [$user, $blog]
+        ]);
 
         $this->assertTrue($called);
 
@@ -429,7 +511,10 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $schema = new Schema($this->blogQuery, $someMutation);
+        $schema = new Schema([
+            'query' => $this->blogQuery,
+            'mutation' => $someMutation
+        ]);
 
         $this->assertTrue($called);
         $this->assertSame($inputObject, $schema->getType('InputObject'));
@@ -459,7 +544,9 @@ class DefinitionTest extends \PHPUnit_Framework_TestCase
             ]
         ]);
 
-        $schema = new Schema($query);
+        $schema = new Schema([
+            'query' => $query
+        ]);
 
         $this->assertTrue($called);
         $this->assertSame($interface, $schema->getType('SomeInterface'));
